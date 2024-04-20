@@ -1,9 +1,5 @@
 # Iniciar servidor
 
----
-
-python
-
 ```python
 app = FastAPI()
 ```

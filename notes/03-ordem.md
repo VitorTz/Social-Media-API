@@ -1,8 +1,6 @@
-# Ordem dos métodos
+# Ordem dos método
 
----
 
-# Exemplo
 
 ```python
 @app.get("/")
