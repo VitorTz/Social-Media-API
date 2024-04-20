@@ -8,24 +8,33 @@ app = FastAPI()
 
 class Post(BaseModel):
 
+    user_id: int
     title: str
     content: str
     published: bool = True
     rating: Optional[int] = None
-
-
-@app.get("/")
-async def root() -> dict[str, str]:
-    return {"message": "Welcome to my API"}
-
-
-@app.get("/posts/postid")
-def get_posts():
-    return {"data": "This is your post"}
-
-
+  
+  
 @app.post("/posts")
-def post(payload: Post):
-    return {
-        "data": payload.dict()        
-    }
+async def create_post(payload: Post):
+    pass
+
+
+@app.get("/posts")
+def get_posts(payload):
+    pass
+
+
+@app.get("/posts/{id}")
+def get_posts_by_id(payload):
+    pass
+
+
+@app.put("/posts/{id}")
+def update_post(payload):
+    pass
+
+
+@app.delete("/posts/{id}")
+def delete_post(payload):
+    pass
