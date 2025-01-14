@@ -1,0 +1,158 @@
+CREATE EXTENSION IF NOT EXISTS ltree;
+
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,    
+    username VARCHAR (32) NOT NULL,
+    lower_case_username VARCHAR (32) UNIQUE NOT NULL,
+    full_name VARCHAR (64) NOT NULL,
+    bio VARCHAR (512),
+    birthdate DATE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_verified BOOLEAN DEFAULT false
+);
+
+
+CREATE TABLE login (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    email VARCHAR (64) UNIQUE NOT NULL,    
+    hashed_password VARCHAR (256) NOT NULL,
+    CONSTRAINT fk_login_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+
+CREATE TABLE tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,    
+    access_token TEXT NOT NULL,    
+    scope TEXT,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE (user_id, scope)
+);
+
+
+CREATE TABLE posts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL, 
+    title VARCHAR(128) NOT NULL COLLATE "default",
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+
+CREATE TABLE comments (
+    id SERIAL PRIMARY KEY,
+    content TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    post_id INTEGER NOT NULL,
+    path LTREE,
+    parent_comment_id INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_post FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE,
+    CONSTRAINT fk_parent_comments FOREIGN KEY (parent_comment_id) REFERENCES comments (id) ON DELETE CASCADE 
+);
+
+
+CREATE TABLE post_likes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    post_id INTEGER NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_post_like_post FOREIGN KEY (post_id) REFERENCES posts (id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_line_post FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+
+CREATE TABLE comments_likes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    comment_id INTEGER NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_post_like_comment FOREIGN KEY (comment_id) REFERENCES comments (id) ON DELETE CASCADE,
+    CONSTRAINT fk_user_line_comment FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+
+CREATE TABLE followers (
+    id SERIAL PRIMARY KEY,
+    follower_id INT NOT NULL,
+    followed_id INT NOT NULL,
+    followed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(follower_id, followed_id),
+    CONSTRAINT fk_follower FOREIGN KEY (follower_id) REFERENCES users (id) ON DELETE CASCADE,
+    CONSTRAINT fk_followed FOREIGN KEY (followed_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
+
+CREATE INDEX idx_users_email ON login(email);
+
+CREATE INDEX idx_posts_user_id ON posts(user_id);
+CREATE INDEX idx_comments_post_id ON comments(post_id);
+CREATE INDEX idx_comments_user_id ON comments(user_id);
+CREATE INDEX idx_post_likes_user_id_post_id ON post_likes(user_id, post_id);
+CREATE INDEX idx_comments_likes_user_id_comment_id ON comments_likes(user_id, comment_id);
+CREATE INDEX idx_posts_created_at ON posts (created_at);
+CREATE INDEX idx_comments_created_at ON comments (created_at);
+CREATE UNIQUE INDEX idx_tokens_hashed_token ON access_tokens(hashed_token);
+
+
+
+ALTER TABLE login ADD CONSTRAINT chk_email_format CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$');
+ALTER TABLE users ADD CONSTRAINT chk_birthdate CHECK (birthdate < NOW());
+ALTER TABLE post_likes ADD CONSTRAINT unique_post_like UNIQUE (user_id, post_id);
+ALTER TABLE comments_likes ADD CONSTRAINT unique_comment_like UNIQUE (user_id, comment_id);
+ALTER TABLE followers ADD CONSTRAINT chk_follower_not_self CHECK (follower_id != followed_id);
+
+
+-- Comments
+
+CREATE OR REPLACE FUNCTION set_comment_path()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.parent_comment_id IS NULL THEN
+        -- Comentário raiz: o path é baseado no ID do próprio comentário
+        NEW.path = NEW.id::TEXT::LTREE;
+    ELSE
+        -- Comentário filho: o path é o path do pai + ID do comentário
+        SELECT path || NEW.id::TEXT
+        INTO NEW.path
+        FROM comments
+        WHERE id = NEW.parent_comment_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_set_comment_path
+BEFORE INSERT ON comments
+FOR EACH ROW
+EXECUTE FUNCTION set_comment_path();
+
+CREATE INDEX idx_comments_path ON comments USING GIST (path);
+
+-- Users
+-- Função para atualizar automaticamente o campo lower_case_username
+
+CREATE OR REPLACE FUNCTION update_lower_case_username()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.lower_case_username = LOWER(NEW.username); -- Garante a consistência
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Gatilho para executar a função antes de inserir ou atualizar a tabela
+
+CREATE TRIGGER trigger_update_lower_case_username
+BEFORE INSERT OR UPDATE OF username ON users
+FOR EACH ROW
+EXECUTE FUNCTION update_lower_case_username();
+
+-- TOKENS
+
+CREATE OR REPLACE VIEW active_tokens AS
+    SELECT * 
+    FROM access_tokens 
+    WHERE is_revoked = FALSE AND expires_at > NOW();
